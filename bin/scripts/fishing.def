@@ -1,0 +1,380 @@
+/ PseuWoW Fishing Bot - by False.Genesis
+// for 2.3.3 - 2.4.3 client version, requires PseuWoW SVN rev 247+
+// Use: Place yourself at a good fishing position, and equip a fishing rod.
+// Then relog to PseuWoW, type "fishingbot start" into the console and enjoy :)
+// Stop fishing by typing "fishingbot stop".
+// >> Be sure to set the fishing spell ID below!!
+// ----------------------------------------------------------------------------------------------
+
+// Note: Strange, fishing works also if no fishing rod is equipped (tested with 2x dagger and it worked :P -- MaNGOS)
+// However, not sure when it will be checked server-side, so better really equip a fishing rod before starting this script!
+
+// The basic fishing process goes as follows:
+// - player casts fishing spell
+// - server answers with SMSG_SPELL_GO, and if no SMSG_CAST_RESULT opcode with an error comes in the spell was casted successfully
+// - the server creates the fishing bobber (gameobject) and sends that to the player
+// - after some time, when a fish is hooked, the server sends SMSG_GAMEOBJECT_CUSTOM_ANIM with the bobber guid
+// - the client has then a short period of time to send CMSG_GAMEOBJ_USE with the bobber guid, else the server will answer with SMSG_FISH_NOT_HOOKED/SMSG_FISH_ESCAPED
+// - the server answers with the loot list
+// - the client sends the loot slots it is looting (CMSG_AUTOSTORE_LOOT_ITEM, server answers everytime with SMSG_LOOT_REMOVED and the slot)
+// - after the whole loot list is looted, the client sends CMSG_LOOT_RELEASE (necessary that the bobber disappears correctly)
+// - then the server answers with SMSG_LOOT_RELEASE_RESPONSE
+// - and we can start fishing again....
+// All of these steps should be covered by this script. =)
+
+// #fishingbot::status can be:
+// "" - do nothing
+// docast - must cast fishing rod at next update cycle
+// waitfish - wait for fish to bite
+// waitloot - wait until server sent loot list
+// waitlootdone - wait until server has answered that all items were looted
+// waitlootreleased - wait until server answered that our loot got released ("loot window closed")
+// error - something went wrong... stops the bot
+
+// The following problems can occur:
+// - spell failed to cast
+// - no fishing rod equipped
+// - skill not high enough / fish escapes
+// - pseuwow thinks for some reason a fish was hooked but no fish is there
+// - no fish bites
+// - more??
+
+// TODO:
+// - detection if bags are full - the curren version gets stuck in that case
+// - better error handling
+// - autodetection of appropriate fishing spell
+// - check if fishing rod is equipped
+
+// >--- Configuration ---<
+// enter your spell ID for fishing in the line below:
+// apprentice: 7620
+// journeyman: 7731
+// expert: 7732
+// artisan: 18248
+// master: 33095
+// masterist (woltk) : 51294
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot
+
+set,SPELL 51294 // <<--[ your spell ID here ]----
+set,ANNOUNCE true // <<--[ want pseuwow to say what it caught? (true/false) ]----
+
+if ?{equal,start ${@def}}
+if ?{strlen ?{getvar status}}
+logerror FishingBot: Already started!
+return
+endif
+set,EVENT event_fishingbot_update
+addevent,{${EVENT}},200,true fishingbot_update
+
+#escape-all=true	
+HookStart _onobjectcreate
+HookAdd if ?{equal,5 ${@0}}
+HookAdd fishingbot_ongospawn ${@def}
+HookAdd endif
+HookEnd
+
+HookStart _onobjectdelete
+HookAdd if ?{equal,5 ${@0}}
+HookAdd fishingbot_ongodelete ${@def}
+HookAdd endif
+HookEnd
+
+HookStartOpcode SMSG_FISH_ESCAPED
+HookAdd fishingbot_escaped
+HookEnd
+
+HookStartOpcode SMSG_FISH_NOT_HOOKED
+HookAdd fishingbot_nothooked
+HookEnd
+
+HookStartOpcode SMSG_LOOT_RESPONSE
+HookAdd fishingbot_loot
+HookEnd
+
+HookStartOpcode SMSG_GAMEOBJECT_CUSTOM_ANIM
+HookAdd fishingbot_onbite
+HookEnd
+
+HookStartOpcode SMSG_CAST_RESULT
+HookAdd fishingbot_handlecastresult
+HookEnd
+
+HookStartOpcode SMSG_LOOT_REMOVED
+HookAdd fishingbot_lootremoved
+HookEnd
+
+HookStartOpcode SMSG_LOOT_RELEASE_RESPONSE
+HookAdd fishingbot_lootreleaseresponse
+HookEnd
+
+#escape-all=false
+
+fishingbot_setstatus docast
+log FishingBot: Started.
+endif
+
+if ?{equal,stop ${@def}}
+logdebug -- STOPPING FISHBOT...
+removeevent ${EVENT}
+UnHook _onobjectcreate
+UnHook _onobjectdelete
+UnHookOpcode SMSG_FISH_ESCAPED
+UnHookOpcode SMSG_FISH_NOT_HOOKED
+UnHookOpcode SMSG_LOOT_RESPONSE
+UnHookOpcode SMSG_GAMEOBJECT_CUSTOM_ANIM
+UnHookOpcode SMSG_CAST_RESULT
+UnHookOpcode SMSG_LOOT_REMOVED
+UnHookOpcode SMSG_LOOT_RELEASE_RESPONSE
+log FishingBot: Stopped.
+fishingbot_setstatus
+endif
+
+// some globals we need
+set,bobber 0
+set,loot_items 0
+set,fails 0
+ldelete slotlist
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_escaped
+log FishingBot: Fish escaped!
+fishingbot_setstatus docast
+// TODO: say something here?
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_nothooked
+log FishingBot: Fish not hooked (something is wrong!)
+fishingbot_setstatus docast
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_onbite
+set,p #PACKET::SMSG_GAMEOBJECT_CUSTOM_ANIM
+bbsetrpos,${p} 0
+set,guid ?{bbread,${p} uint64}
+logdebug FishingBot: OnBite: object guid=${guid} [bobber=${#fishingbot::bobber}]
+if ?{equal,${guid} ${#fishingbot::bobber}}
+logdetail FishingBot: Bobber splashed!
+fishingbot_setstatus gotfish
+endif
+
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_handlecastresult
+set,n #PACKET::SMSG_CAST_RESULT
+bbsetrpos,${n} 0
+set,p bbread,${n}
+set,spellid ?{${p} uint32}
+set,result ?{${p} uint8}
+logdebug FishingBot: CastResult: spell=${spellid} result=${result}
+if ?{equal,${spellid} ${#fishingbot::SPELL}}
+logerror FishingBot: Spellcast failed (result=${result})
+fishingbot_setstatus docast
+fishingbot_failed // must be called after "setatus docast", since this might set error status if too many fails occured
+endif
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_failed
+add,#fishingbot::fails 1
+if ?{bigger,${#fishingbot::fails} 6} // if failed more then 6 times in a row... -> error!
+fishingbot_setstatus error
+endif
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_ongospawn
+set,guid ${@def}
+set,owner ?{getobjectvalue,6,i64 ${guid}} // OBJECT_FIELD_CREATED_BY
+if ?{equal,${owner} ${@myguid}}
+// TODO: check DisplayID or so
+fishingbot_onbobberspawn ${guid}
+endif
+
+//------------------------------------------------------------------------------------------------------	
+#script=fishingbot_onbobberspawn
+set,bobber ${@def}
+logdetail FishingBot: Bobber guid: ${bobber}
+set,#fishingbot::bobber ${bobber}
+fishingbot_setstatus waitfish
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_ongodelete
+if ?{equal,${#fishingbot::bobber} ${@def}}
+logdebug FishingBot: Bobber deleted [${#fishingbot::bobber}]
+set,#fishingbot::bobber 0
+endif
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_update
+set,bobber ${#fishingbot::bobber}
+set,status ${#fishingbot::status}
+
+if ?{equal,waitbobber ${status}}
+logdebug FishingBot: Waiting for bobber creation...
+endif
+
+if ?{equal,waitfish ${status}}
+logdebug FishingBot: Status: waiting for fish...
+endif
+
+if ?{equal,waitlootdone ${status}}
+logdebug FishingBot: Status: waiting until everything is looted...
+endif
+
+if ?{equal,waitlootreleased ${status}}
+logdebug FishingBot: Status: waiting until server released loot...
+endif
+
+if ?{equal,gotfish ${status}}
+logdebug FishingBot: Status: Got fish! Opening bobber...
+bbinit,wp 8
+bbappend,wp,uint64 ${bobber}
+sendworldpacket,CMSG_GAMEOBJ_USE wp
+bbdelete wp
+fishingbot_setstatus waitloot
+endif
+
+if ?{equal,waitloot ${status}}
+logdebug FishingBot: Waiting for loot...
+endif
+
+if ?{equal,docast ${status}}
+logdetail FishingBot: Casting Rod... (spell ${#fishingbot::SPELL})
+if ?{castspell ${#fishingbot::SPELL}}
+fishingbot_setstatus waitbobber
+else
+fishingbot_setstatus error
+endif
+endif
+
+if ?{equal,error ${status}}
+fishingbot stop
+endif
+
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_setstatus
+logdebug FishingBot: Setting status to: "${@def}"
+set,#fishingbot::status ${@def}
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_loot
+set,p #PACKET::SMSG_LOOT_RESPONSE
+bbsetrpos,${p} 0
+set,r bbread,${p}
+set,guid ?{${r} uint64} // looted GUID
+set,type ?{${r} uint8} // loot type
+set,gold ?{${r} uint32} // loot gold
+set,items ?{${r} uint8} // number of items
+
+// its not necessary to check if looted guid is really fishing bobber.
+// just assume that fishing loot is always fishing loot ;)
+
+if ?{not ?{equal,3 ${type}}} // check if its fishing loot
+logdebug FishingBot: Loot is not fishing loot (type: ${type})
+return
+endif
+
+if ?{not ${items}}
+log FishingBot: Nothing caught this time!
+fishingbot_sendlootrelease
+return
+endif
+
+logdebug FishingBot: Loot: Got ${items} items
+set,i 0
+loop
+if ?{bigger_eq,${i} ${items}}
+exitloop
+endif
+set,slot ?{${r} uint8}
+set,itemid ?{${r} uint32}
+set,count ?{${r} uint32}
+set,displayid ?{${r} uint32}
+set,rsuffix ?{${r} uint32}
+set,rproperty ?{${r} uint32}
+${r} uint8 // skip 1 unk byte
+
+set,iname ?{getitemprotovalue,${itemid} name}
+logdebug FishingBot: Loot: id=${itemid} slot=${slot} count=${count}
+log FishingBot: Looting '${iname}' x${count}
+
+bbinit,wp 1
+bbappend,wp,uint8 ${slot}
+sendworldpacket,CMSG_AUTOSTORE_LOOT_ITEM wp
+bbdelete wp
+
+lappend,#fishingbot::slotlist ${slot}
+lappend,#fishingbot_announce::itemlist ${itemid}|${count}
+
+add,i 1
+endloop
+set,#fishingbot::fails 0 // if we managed to loot, everything is fine, reset failed counter
+fishingbot_setstatus waitlootdone
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_lootremoved
+set,p #PACKET::SMSG_LOOT_REMOVED
+bbsetrpos,${p} 0
+set,slot ?{bbread,${p} uint8}
+lclean,#fishingbot::slotlist ${slot}
+logdebug FishingBot: ?{llen #fishingbot::slotlist} loot slots to go...
+if ?{not ?{llen #fishingbot::slotlist}}
+fishingbot_sendlootrelease
+endif
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_lootreleaseresponse
+set,p #PACKET::SMSG_LOOT_RELEASE_RESPONSE
+bbsetrpos,${p} 0
+set,guid ?{bbread,${p} uint64}
+logdebug FishingBot: Server released loot [${guid}]
+fishingbot_setstatus docast
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_sendlootrelease
+logdebug FishingBot: Sending loot release...
+fishingbot_setstatus waitlootreleased
+bbinit,wp 8
+bbappend,wp,uint64 ${#fishingbot::bobber}
+sendworldpacket,CMSG_LOOT_RELEASE wp
+bbdelete wp
+
+if ?{getvar #fishingbot::ANNOUNCE}
+fishingbot_announce
+endif
+ldelete #fishingbot_announce::itemlist
+
+//------------------------------------------------------------------------------------------------------
+#script=fish
+castspell ${#fishingbot::SPELL}
+
+
+//------------------------------------------------------------------------------------------------------
+#script=fishingbot_announce
+if ?{not ?{llen itemlist}}
+set,msg Nothing...
+else
+set,msg
+set,i 0
+loop
+set,e ?{lindex,itemlist ${i}}
+if ?{not ${e}} // if e is empty or 0 the end is reached for sure
+exitloop
+endif
+lsplit,tmpl,{|} ${e}
+set,id ?{lindex,tmpl 0}
+set,count ?{lindex,tmpl 1}
+set,iname ?{getitemprotovalue,${id} name}
+set,link |cff0808DD|Hitem:${id}:0:0:0:0:0:0:0|h[${iname}]|h|r
+if ?{strlen ${msg}}
+append,msg {, }
+endif
+if ?{bigger,${count} 1}
+append,msg {${count}x }
+endif
+append,msg ${link}
+add,i 1
+endloop
+endif
+logdebug FishingBot: announced catch

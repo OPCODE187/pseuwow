@@ -1,0 +1,178 @@
+#script=dump
+out PlayerDump
+HookStartOpcode SMSG_ACTION_BUTTONS
+HookAdd SMSG_ACTION_BUTTONS
+HookEnd
+
+
+HookStartOpcode SMSG_INITIAL_SPELLS
+HookAdd SMSG_INITIAL_SPELLS
+HookEnd
+
+if ?{not ?{ishooked _onobjectcreate}}
+	hookstart _onobjectcreate
+#escape-all=1
+	hookadd if ?{equal,4 ${@0}} // MaNGOS creates the player object after all items are created, so just need to check for that and read everything out of the player fields
+	hookadd playeritem ${@def}
+	hookadd endif
+#escape-all=0	
+	hookend
+endif
+if ?{not ?{ishooked _onobjectdelete}}
+	hookstart _onobjectdelete
+#escape-all=1
+	hookadd if ?{or,?{equal,1 ${@0}} ?{equal,2 ${@0}}}
+	hookadd itemd_del ${@def}
+	hookadd endif
+#escape-all=0	
+	hookend
+endif
+
+
+#script=SMSG_INITIAL_SPELLS
+set,p #PACKET::SMSG_INITIAL_SPELLS
+bbsetrpos,${p} 0
+set,r bbread,${p}
+set,b ?{${r} uint8}
+
+if ?{equal,${b} 0}
+	set,items ?{${r} uint16}
+	set,i 0
+	loop
+		if ?{bigger_eq,${i} ${items}}
+			exitloop
+		endif
+		
+		set,b ?{${r} uint32}
+		${r} uint16
+		if ?{not ?{equal,${b} 0}}
+			out spell ${b}
+		endif
+		add,i 1
+	endloop
+endif
+
+
+#script=SMSG_ACTION_BUTTONS
+set,p #PACKET::SMSG_ACTION_BUTTONS
+bbsetrpos,${p} 0
+set,r bbread,${p}
+set,b ?{${r} uint8}
+
+if ?{equal,${b} 1}
+	set,items 144
+	set,i 0
+	loop
+		if ?{bigger_eq,${i} ${items}}
+			exitloop
+		endif
+		
+		set,b ?{${r} uint32}
+		if ?{not ?{equal,${b} 0}}
+			out button ${i}:${b}
+		endif
+		add,i 1
+	endloop
+endif
+
+
+#script=playeritem
+// @def: player guid
+
+set,pguid ${@def}
+set,pname ?{getname,guid ${pguid}}
+
+// between these fields all item guids are stored (check UpdateFields.h)
+set,fstart 0x144 // PLAYER_FIELD_INV_SLOT_HEAD
+set,fend 0x22E // PLAYER_FIELD_KEYRING_SLOT_1 + 64
+
+set,f ${fstart}
+set,slot 0
+loop
+	if ?{bigger_eq,${f} ${fend}}
+		exitloop
+	endif
+	set,iguid ?{getobjectvalue,${f},i64 ${pguid}}
+	if ${iguid}
+		//-- show info about item
+		item,{${slot}} ${iguid}
+		//-- Iterate over bags --
+		if ?{equal,2 ?{getobjecttype ${iguid}}}
+			bagitem ${iguid}
+		endif
+	endif
+
+	add,f 2
+	//set
+	add,slot 1
+endloop
+
+
+#script=bagitem
+set,bagslots ?{getobjectvalue,60 ${@def}} // CONTAINER_FIELD_NUM_SLOTS
+set,j 0
+log This is a bag
+loop
+	set,t ${j}
+	mul,t 2
+	if ?{bigger,${t} ${bagslots}} // max. bag size = 36 slots
+		exitloop
+	endif
+	set,field 66 // CONTAINER_FIELD_SLOT_1 - 36
+	add,field ${t}
+	set,itemguid ?{getobjectvalue,${field},i64 ${@def}}
+	item,{item ${j}} ${itemguid}
+	//itemdebugger,{Bag slot ${j} (field: ${field}) -> } ${itemguid}
+	
+	add,j 1
+endloop
+
+
+#script=item
+// @def: item guid
+// @0: text prefix
+set,itemguid ${@def}
+if ?{not ?{objectknown ${itemguid}}}
+	return
+endif
+
+if ${itemguid}
+	set,itemname ?{getname,guid ${itemguid}}
+	set,itementry ?{getentry ${itemguid}}
+	//log ${@0}Item: '${itemname}' (${itementry}) [${itemguid}]
+	out item ${@0}:${itementry}
+endif
+
+
+#script=item_del
+// @def: item guid
+
+set,itemguid ${@def}
+//if ?{not ?{objectknown ${itemguid}}}
+//	return
+//endif
+
+if ${itemguid}
+	set,itemname ?{getname,guid ${itemguid}}
+	set,itementry ?{getentry ${itemguid}}
+	set,owner ?{getobjectvalue,6,i64 ${itemguid}}	
+	set,ownername ?{getname,guid ${owner}}
+
+	log Delete Item: '${itemname}' (${itementry}) (${ownername}) [${itemguid}]
+endif
+
+
+
+
+
+
+
+
+
+
+
+
+#script=dummy
+#onload
+dump
+#/onload
