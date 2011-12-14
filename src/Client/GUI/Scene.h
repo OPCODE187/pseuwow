@@ -198,7 +198,7 @@ public:
     void OnUpdate(s32);
 	bool Finished;
 	bool LoadingTime;
-	uint32 total;
+	uint32 doodadtotal;
 	uint32 loaded;
 	uint32 percent;
 	std::list<std::string> AllDoodads;
