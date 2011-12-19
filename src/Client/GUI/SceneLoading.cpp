@@ -51,7 +51,7 @@
 						Doodad *doo = maptile->GetDoodad(i);
 						// add each doodad to a list of models
 						AllDoodads.push_back (doo->MPQpath);
-						logdetail("%u m2 files added to my list",AllDoodads.size());
+						//logdetail("%u m2 files added to my list",AllDoodads.size());
 					
 					}
 				}
@@ -96,11 +96,30 @@ void SceneLoading::OnUpdate(s32 timediff)
 	{percent = (loaded*100)/doodadtotal;}
 	logdetail("SceneLoading:: number of m2s loaded %u",loaded);
 	logdetail("SceneLoading:: percent loaded %u",percent);
-
+	
+	//if we finished loading then its time to switch to the world scene
 	if (AllDoodads.empty() == true)
 	{
 		DEBUG(logdebug("SceneLoading: finished Loading models..."));
 		gui->SetSceneState(SCENESTATE_WORLD);
 
 	}
+
+}
+
+void SceneLoading::OnDraw(void)
+{
+	//calulate loading bar size and position relative to screensize
+	dimension2d<u32> scrn = driver->getScreenSize();
+	         
+	s32 barmaxlength = (scrn.Width/2.0f);
+	float Width = ((barmaxlength/100.0f)*percent);
+	s32 leftX = (scrn.Width/4.0f);           //left top corner horizontal position coord
+	s32 leftY = ((scrn.Height/10.0f)*9.0f);         //left top corner vertical position coord
+	s32 rightX = (scrn.Width/4.0f)+Width;    //bottom right horisontal coord
+	s32 rightY = ((scrn.Height/10.0f)*9.0f)+20.0f;  //bottom right vertical coord, diff of y coords gives bar thickness
+	
+	IGUIImage *loadingbar = guienv->addImage(rect<s32>(leftX,leftY,rightX,rightY), 0, -1, L"");
+	loadingbar->setImage(driver->getTexture("../bin/data/misc/bar.png"));
+
 }

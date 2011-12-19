@@ -192,7 +192,7 @@ class SceneLoading : public Scene
 
 public:
     SceneLoading(PseuGUI *gui);
-	//void OnDraw(void);
+	void OnDraw(void);
     //void OnDrawBegin(void);
     //void OnDelete(void);
     void OnUpdate(s32);
