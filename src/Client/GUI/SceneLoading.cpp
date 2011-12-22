@@ -29,12 +29,19 @@
 	loaded = 0;
 	percent = 0;
 	
+	//open map and loading screen dbc
+	SCPDatabase *mapDbc = instance->dbmgr.GetDB("map");
+	SCPDatabase *lsDbc = instance->dbmgr.GetDB("loadingscreens");
+	uint32 ls_ID = mapDbc->GetUint32(Lworld->GetMapId(),"loadingscreen");      //get loadingscreen id for our mapID
+	ls_path = lsDbc->GetString(ls_ID,"loadingscreen");  //get the loadingscreen path string for our loadingscreen ID
+	//logdetail("SceneLoading:: mapid= %u lsId= %u lsPath= %s",Lworld->GetMapId(),ls_ID,ls_path.c_str());
+
 	dimension2d<u32> scrn = driver->getScreenSize();
 	
-	loadingscreen = guienv->addImage(driver->getTexture("data\\misc\\wowloadingscreen.jpg"), core::position2d<s32>(5,5),true,rootgui);
+	loadingscreen = guienv->addImage(driver->getTexture(io::IrrCreateIReadFileBasic(device,ls_path.c_str())), core::position2d<s32>(5,5),true,rootgui);
 	loadingscreen->setRelativePosition(rect<s32>(0,0,scrn.Width,scrn.Height));
 	loadingscreen->setScaleImage(true);
-	
+
 	if (AllDoodads.empty() == true) //fill list
 	{
 		// TODO: at some later point we will need the geometry for correct collision calculation, etc...
@@ -51,7 +58,6 @@
 						Doodad *doo = maptile->GetDoodad(i);
 						// add each doodad to a list of models
 						AllDoodads.push_back (doo->MPQpath);
-						//logdetail("%u m2 files added to my list",AllDoodads.size());
 					
 					}
 				}
@@ -72,20 +78,14 @@ void SceneLoading::OnUpdate(s32 timediff)
 		if (AllDoodads.empty() != true)
 		{
 			// using the "IF" statement here alows us to load one model and one skin per scene cycle
-				std::string m2model = AllDoodads.back(); //get last elemment from the list
-				AllDoodads.pop_back();                   //remove used element from list
-				io::IReadFile* modelfile = io::IrrCreateIReadFileBasic(device, m2model.c_str()); // load with MDH
-				//I think models loaded to Irrlicht's meshcache are removed when we switch scenestate
-				//scene::IAnimatedMesh *mesh = smgr->getMesh(m2model.c_str()); // load m2 with irrlicht
-				//gui->_device->getSceneManager()->getMesh(m2model.c_str()); //alternate load m2 with irrlicht
-				std::string skinfile = m2model.append(4, 'x');
-				NormalizeFilename(skinfile); //is this nessasary?
-				//_FixFileName(skinfile); //use linux '/' instead of windows '\' 
-				skinfile.replace(skinfile.end()-7,skinfile.end(),"00.skin");
-				io::IReadFile* modelskin = io::IrrCreateIReadFileBasic(device, skinfile.c_str()); //load skin with MDH
-				//scene::IAnimatedMesh *skin = smgr->getMesh(skinfile.c_str());
-				//gui->_device->getSceneManager()->getMesh(skinfile.c_str());
-				logdetail("SceneLoading:: loaded model %s",m2model);
+			std::string m2model = AllDoodads.back(); //get last elemment from the list
+			AllDoodads.pop_back();                   //remove used element from list
+			io::IReadFile* modelfile = io::IrrCreateIReadFileBasic(device, m2model.c_str()); // load with MDH
+			logdetail("SceneLoading:: loaded model %s",m2model);
+			std::string skinfile = m2model.append(4, 'x');
+			NormalizeFilename(skinfile); //is this nessasary?
+			skinfile.replace(skinfile.end()-7,skinfile.end(),"00.skin");
+			io::IReadFile* modelskin = io::IrrCreateIReadFileBasic(device, skinfile.c_str()); //load skin with MDH
 				
 		}
 	}
@@ -94,24 +94,9 @@ void SceneLoading::OnUpdate(s32 timediff)
 
 	if (loaded != 0)
 	{percent = (loaded*100)/doodadtotal;}
-	logdetail("SceneLoading:: number of m2s loaded %u",loaded);
-	logdetail("SceneLoading:: percent loaded %u",percent);
-	
-	//if we finished loading then its time to switch to the world scene
-	if (AllDoodads.empty() == true)
-	{
-		DEBUG(logdebug("SceneLoading: finished Loading models..."));
-		gui->SetSceneState(SCENESTATE_WORLD);
 
-	}
-
-}
-
-void SceneLoading::OnDraw(void)
-{
 	//calulate loading bar size and position relative to screensize
-	dimension2d<u32> scrn = driver->getScreenSize();
-	         
+	dimension2d<u32> scrn = driver->getScreenSize();        
 	s32 barmaxlength = (scrn.Width/2.0f);
 	float Width = ((barmaxlength/100.0f)*percent);
 	s32 leftX = (scrn.Width/4.0f);           //left top corner horizontal position coord
@@ -121,5 +106,13 @@ void SceneLoading::OnDraw(void)
 	
 	IGUIImage *loadingbar = guienv->addImage(rect<s32>(leftX,leftY,rightX,rightY), 0, -1, L"");
 	loadingbar->setImage(driver->getTexture("../bin/data/misc/bar.png"));
+	
+	//if we finished loading then its time to switch to the world scene
+	if (AllDoodads.empty() == true)
+	{
+		DEBUG(logdebug("SceneLoading: finished Loading models..."));
+		gui->SetSceneState(SCENESTATE_WORLD);
+
+	}
 
 }

@@ -192,29 +192,21 @@ class SceneLoading : public Scene
 
 public:
     SceneLoading(PseuGUI *gui);
-	void OnDraw(void);
-    //void OnDrawBegin(void);
-    //void OnDelete(void);
     void OnUpdate(s32);
 	bool Finished;
 	bool LoadingTime;
 	uint32 doodadtotal;
 	uint32 loaded;
 	uint32 percent;
+	std::string ls_path;
 	std::list<std::string> AllDoodads;
-
-    WorldPosition GetWorldPosition(void);
 
 private:
 	IGUIImage *loadingscreen;
-	//MyEventReceiver *Leventrecv;
-	//PseuInstance *_Linstance;
 	WorldSession *Lwsession;
     World *Lworld;
     MapMgr *Lmapmgr;
-    IGUIStaticText *LdebugText;
     bool Ldebugmode;
-    video::SColor LenvBasicColor;
 };
 
 

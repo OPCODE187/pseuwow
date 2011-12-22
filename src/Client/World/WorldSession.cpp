@@ -786,6 +786,7 @@ void WorldSession::PreloadDataBeforeEnterWorld(PlayerEnum& pl)
     if(MapMgr *mmgr = GetWorld()->GetMapMgr())
     {
         mmgr->Update(pl._x, pl._y, pl._mapId); // make it load the map files
+		_world->UpdatePos(pl._x,pl._y,pl._mapId);
 		GetInstance()->GetGUI()->SetSceneState(SCENESTATE_LOADING);
 
         // preload additional map data only when the GUI is enabled
